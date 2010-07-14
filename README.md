@@ -7,9 +7,11 @@ Compare two SQL database for different. It go though all data in all tables.
 
 Current Status
 --------------
-*Only supported MSSQL server
-*All Tables must be in one table
+
+* Only supported MSSQL server
+* All Tables must be in one table
 
 ###TODO
 
-*Add support for others DB 
+* Add support for others DB 
+

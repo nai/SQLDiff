@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Data;
@@ -156,14 +157,31 @@ namespace SimpleDBDiff
 
         public DataTable CompareTables(string dbA, string dbB, string table)
         {
-            string[] colA, colB;
+            string[] colA, colA_type;
             colA = GetColumns(dbA, table);
+            colA_type = GetColumns_Types(dbA, table);
+            if( colA.Length == 0 || colA_type.Length == 0 ) return new DataTable(table);
             //colB = GetColumns(dbB, table);
-            string strColA;
-            strColA = string.Join(",", colA);
-            
+            string strColA, strColA_Sel;
+            strColA = "";// string.Join(",", colA);
+            strColA_Sel = "";
+            for (int i = 0; i < colA_type.Length; i++ )
+            {
+                if (strColA_Sel.Length > 0)
+                {
+                    strColA_Sel += ", ";
+                    strColA += ", ";
+                }
+                if (colA_type[i] == "text")
+                {
+                    strColA_Sel += "CAST([" + colA[i] + "] AS varchar(MAX)) as [" + colA[i] + "]";
+                }
+                else strColA_Sel += "[" + colA[i] + "]";
+                strColA += "["+ colA[i] +"]";
+            }
 
-            string qrtstr = GetQueryString(dbA,dbB,table, strColA,colA[0]);
+            string qrtstr = GetQueryString(dbA, dbB, table, strColA, "[" + colA[0] + "]", strColA_Sel);
+            File.AppendAllText(@"c:\query.sql","--"+table+Environment.NewLine+ qrtstr+Environment.NewLine);
             DataTable dt = GetQueryTable(qrtstr);
             return dt;
         }
@@ -177,6 +195,10 @@ namespace SimpleDBDiff
                 SqlDataAdapter adp = new SqlDataAdapter(cmd);
                 DataTable tbl = new DataTable();
                 adp.Fill(tbl);
+                
+                adp.Dispose();
+                cmd.Dispose();
+
                 return tbl;
             }
             catch (Exception)
@@ -199,42 +221,158 @@ namespace SimpleDBDiff
             }
         }
 
-        private string GetQueryString(string dbA, string dbB, string table, string strColA, string orderby)
+        private string GetQueryString(string dbA, string dbB, string table, string strColA, string orderby, string strColA_sel)
         {
             
             string str =
                 string.Format(
-                    @" SELECT MIN(TableName) as TableName, {0} 
+                    @" SELECT MIN(DB) as DB, {0} 
 FROM
 (
-  SELECT 'Table A' as TableName, {0}  FROM {2}.dbo.{1} A
+  SELECT 'A' as DB, {5}  FROM {2}.dbo.[{1}]  
   UNION ALL
-  SELECT 'Table B' as TableName,  {0}  FROM {3}.dbo.{1} A
+  SELECT 'B' as DB,  {5}  FROM {3}.dbo.[{1}]  
   
 ) tmp
 GROUP BY {0}
 HAVING COUNT(*) = 1
 ORDER BY {4}",
-                    strColA, table ,dbA, dbB, orderby);
+                    strColA, table, dbA, dbB, orderby, strColA_sel);
             return str;
         }
 
         public string[] GetColumns(string dbname, string table)
         {
-            string qry = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.columns WHERE TABLE_CATALOG = '" + dbname +
-                         "' AND TABLE_NAME = '" + table + "'  ORDER BY ORDINAL_POSITION";
+            string qry = "USE " + dbname + ";";
+            qry += "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.columns WHERE TABLE_CATALOG = '" + dbname +
+                   "' AND TABLE_NAME = '" + (table.Contains("'")? table.Replace("'", "''"): table)
+                   + "'  ORDER BY ORDINAL_POSITION ; ";
 
             try
-            {
-                
+            {             
                 return GetStringColumnFromQuery(qry);
-
             }
             catch (Exception)
             {
 
                 throw;
             }
+        }
+
+        public string[] GetColumns_Types(string dbname, string table)
+        {
+            string qry = "USE " + dbname + ";";
+            qry += "SELECT data_type FROM INFORMATION_SCHEMA.columns WHERE TABLE_CATALOG = '" + dbname +
+                   "' AND TABLE_NAME = '" + (table.Contains("'") ? table.Replace("'", "''") : table) 
+                   + "'  ORDER BY ORDINAL_POSITION";
+            try
+            {
+                return GetStringColumnFromQuery(qry);
+            }
+            catch (Exception)
+            {
+
+                throw;
+            }
+        }
+
+        public TableDiffResult CompareTablesExt(string dbA, string dbB, string tbA)
+        {
+            string param = "";
+            param += " -sourceserver " + Properties.Settings.Default.Server;
+            param += " -destinationserver " + Properties.Settings.Default.Server;
+            param += " -sourcedatabase " + dbA;
+            param += " -destinationdatabase " + dbB;
+            param += " -sourcetable " + tbA;
+            param += " -destinationtable " + tbA;
+
+            if( !Properties.Settings.Default.UseWndAuth )
+            {
+                param += " -sourceuser " + Properties.Settings.Default.Username;
+                param += " -sourcepassword " + Properties.Settings.Default.Password;
+
+                param += " -destinationuser " + Properties.Settings.Default.Username;
+                param += " -destinationpassword " + Properties.Settings.Default.Password;
+            }
+ 
+            string ret = Common.RunExtCmd( Properties.Settings.Default.ExternalDiff,param);
+            return ExtractDiff(ret);
+        }
+
+        private TableDiffResult ExtractDiff(string data)
+        {
+            TableDiffResult tbl = new TableDiffResult();
+            string[] lines = data.Split(new string[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries);
+            bool errfound = false;
+            foreach (string line in lines)
+            {
+                if(!errfound)
+                {
+                    if(!line.StartsWith("Err"))
+                    {
+                       
+                        continue;
+                    }
+                    errfound = true;
+                    string[] col1s = line.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                    tbl.Key = col1s[1];
+                    continue;
+                }
+                string[] cols = line.Split(new char[] {' ', '\t'}, StringSplitOptions.RemoveEmptyEntries);
+                if (cols.Length > 0)
+                {
+                    if (cols[0] == "Mismatch")
+                    {
+                        tbl.Diff.Add( cols[1] );
+                    }
+                    else
+                     if (cols[0] == "Src. Only")
+                    {
+                        tbl.Src.Add(cols[1]);
+                    }
+                    else
+                     if (cols[0] == "Dest. Only")
+                    {
+                        tbl.Dest.Add(cols[1]);
+                    }
+                     
+                }
+            }
+            return tbl;
+        }
+
+
+        public DataTable GetItems(string[] items, string key, string name)
+        {
+            string data = string.Join(",", items);
+            string str = "select * from " + name + " where " + key + " in (" + data + ")";
+            return GetQueryTable(str);
+        }
+    }
+
+    public class TableDiffResult
+    {
+        public string Key;
+        public List<string> Diff
+        {
+            get; set;
+        }
+        public List<string> Src
+        {
+            get;
+            set;
+        }
+        public List<string> Dest
+        {
+            get;
+            set;
+        }
+
+        public TableDiffResult()
+        {
+            Diff = new  List<string>();
+            Src = new List<string>();
+            Dest = new List<string>();
         }
     }
 }

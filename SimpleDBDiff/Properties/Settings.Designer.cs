@@ -94,5 +94,17 @@ namespace SimpleDBDiff.Properties {
                 this["DBB"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("C:\\Program Files\\Microsoft SQL Server\\90\\COM\\tablediff.exe")]
+        public string ExternalDiff {
+            get {
+                return ((string)(this["ExternalDiff"]));
+            }
+            set {
+                this["ExternalDiff"] = value;
+            }
+        }
     }
 }

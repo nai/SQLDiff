@@ -20,5 +20,8 @@
     <Setting Name="DBB" Type="System.String" Scope="User">
       <Value Profile="(Default)" />
     </Setting>
+    <Setting Name="ExternalDiff" Type="System.String" Scope="User">
+      <Value Profile="(Default)">C:\Program Files\Microsoft SQL Server\90\COM\tablediff.exe</Value>
+    </Setting>
   </Settings>
 </SettingsFile>
